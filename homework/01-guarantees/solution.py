@@ -14,12 +14,6 @@ class AtMostOnceSender(Process):
         # receive message for delivery from local user
         msg['id'] = self._index
         self._index += 1
-        self._need_confirm = dict()
-
-    def on_local_message(self, msg: Message, ctx: Context):
-        # receive message for delivery from local user
-        msg['id'] = self._index
-        self._index += 1
         ctx.send(msg, self._receiver)
 
     def on_message(self, msg: Message, sender: str, ctx: Context):
