@@ -1,4 +1,5 @@
 from dslabmp import Context, Message, Process
+from queue import Queue
 
 
 # AT MOST ONCE ---------------------------------------------------------------------------------------------------------
@@ -7,11 +8,12 @@ class AtMostOnceSender(Process):
     def __init__(self, proc_id: str, receiver_id: str):
         self._id = proc_id
         self._receiver = receiver_id
-        self._need_confirm = dict()
+        self._index = 0
 
     def on_local_message(self, msg: Message, ctx: Context):
         # receive message for delivery from local user
-        msg['time'] = 0
+        msg['id'] = self._index
+        self._index += 1
         ctx.send(msg, self._receiver)
 
     def on_message(self, msg: Message, sender: str, ctx: Context):
@@ -24,8 +26,10 @@ class AtMostOnceSender(Process):
 
 
 class AtMostOnceReceiver(Process):
+
     def __init__(self, proc_id: str):
         self._id = proc_id
+        self._queue = []
 
     def on_local_message(self, msg: Message, ctx: Context):
         # not used in this task
@@ -34,9 +38,18 @@ class AtMostOnceReceiver(Process):
     def on_message(self, msg: Message, sender: str, ctx: Context):
         # process messages from receiver
         # deliver message to local user with ctx.send_local()
+        received_index = msg['id']
+        msg.remove('id')
 
-        # ctx.send_local(msg)
-        pass
+        for index in self._queue:
+            if index == received_index:
+                return
+
+        if len(self._queue) >= 15:
+            self._queue.pop(0)
+        self._queue.append(received_index)
+
+        ctx.send_local(msg)
 
     def on_timer(self, timer_name: str, ctx: Context):
         # process fired timers here
@@ -56,9 +69,7 @@ class AtLeastOnceSender(Process):
         # receive message for delivery from local user\
 
         self._need_send[self._index] = msg
-
         msg['id'] = self._index
-        ctx.send(msg, self._receiver)
 
         self._index += 1
 
@@ -104,26 +115,6 @@ class AtLeastOnceReceiver(Process):
         # process fired timers here
         pass
 
-import sys
-
-def get_size(obj, seen=None):
-    size = sys.getsizeof(obj)
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    seen.add(obj_id)
-    if isinstance(obj, dict):
-        size += sum([get_size(v, seen) for v in obj.values()])
-        size += sum([get_size(k, seen) for k in obj.keys()])
-    elif hasattr(obj, '__dict__'):
-        size += get_size(obj.__dict__, seen)
-    elif hasattr(obj, '__slots__'):
-        size += sum([get_size(getattr(obj, slot), seen) for slot in obj.__slots__])
-    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
-        size += sum([get_size(i, seen) for i in obj])
-    return size
 
 # EXACTLY ONCE ---------------------------------------------------------------------------------------------------------
 
