@@ -838,7 +838,7 @@ fn check_overhead(
     )?;
     assume!(
         receiver_mem <= receiver_mem_limit,
-        format!("Receiver memory > {}", receiver_mem_limit)
+        format!("Receiver memory {} > {}", receiver_mem, receiver_mem_limit)
     )?;
     assume!(
         net_message_count <= net_message_count_limit,
