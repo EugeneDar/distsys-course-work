@@ -163,7 +163,6 @@ class ExactlyOnceSender(Process):
             if len(self._need_send) > 0:
                 ctx.set_timer('resend', 5)
 
-
 class ExactlyOnceReceiver(Process):
     def __init__(self, proc_id: str):
         self._id = proc_id
