@@ -122,14 +122,14 @@ class ExactlyOnceSender(Process):
     def __init__(self, proc_id: str, receiver_id: str):
         self._id = proc_id
         self._receiver = receiver_id
-        self._need_send = dict()  # {id: msg}
-        self._index = 1
+        self._need_send = list()  # {id: msg}
+        self._index = 0
 
     def on_local_message(self, msg: Message, ctx: Context):
         # receive message for delivery from local user\
 
-        self._need_send[self._index] = msg
         msg['id'] = self._index
+        self._need_send.append(msg)
 
         self._index += 1
 
@@ -138,19 +138,20 @@ class ExactlyOnceSender(Process):
 
     def on_message(self, msg: Message, sender: str, ctx: Context):
         # process messages from receiver here
-        if msg['id'] in self._need_send:
-            self._need_send.pop(msg['id'])
+        for i, value in enumerate(self._need_send):
+            if value['id'] == msg['id']:
+                self._need_send.pop(i)
+                break
         if len(self._need_send) == 0:
             ctx.cancel_timer('resend')
 
     def on_timer(self, timer_name: str, ctx: Context):
         # process fired timers here
         if timer_name in {'resend'}:
-            for index in self._need_send.keys():
-                msg = self._need_send[index]
-                msg['id'] = index
-                ctx.send(msg, self._receiver)
             if len(self._need_send) != 0:
+                msg = self._need_send[0]
+                ctx.send(msg, self._receiver)
+
                 ctx.set_timer('resend', 5)
 
 
@@ -171,8 +172,10 @@ class ExactlyOnceReceiver(Process):
 
         ctx.send(Message('', {'id': received_index}), sender)
 
-        for index in self._queue:
+        for i, index in enumerate(self._queue):
             if index == received_index:
+                self._queue.pop(i)
+                self._queue.append(index)
                 return
 
         if len(self._queue) >= 16:
