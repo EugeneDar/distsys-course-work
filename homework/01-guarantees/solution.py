@@ -197,23 +197,46 @@ class ExactlyOnceOrderedSender(Process):
     def __init__(self, proc_id: str, receiver_id: str):
         self._id = proc_id
         self._receiver = receiver_id
+        self._need_send = list()  # {id: msg}
+        self._index = 0
 
     def on_local_message(self, msg: Message, ctx: Context):
-        # receive message for delivery from local user
-        pass
+        # receive message for delivery from local user\
+
+        msg['id'] = self._index
+        self._need_send.append(msg)
+
+        self._index += 1
+
+        if len(self._need_send) == 1:
+            ctx.set_timer('resend', 8)
 
     def on_message(self, msg: Message, sender: str, ctx: Context):
         # process messages from receiver here
-        pass
+        for i, value in enumerate(self._need_send):
+            if value['id'] == msg['id']:
+                self._need_send.pop(i)
+                break
+        if len(self._need_send) == 0:
+            ctx.cancel_timer('resend')
 
     def on_timer(self, timer_name: str, ctx: Context):
         # process fired timers here
-        pass
+        send_buffer_size = 2
+
+        if timer_name in {'resend'}:
+            for i, msg in enumerate(self._need_send):
+                if i >= send_buffer_size:
+                    break
+                ctx.send(msg, self._receiver)
+            if len(self._need_send) > 0:
+                ctx.set_timer('resend', 8)
 
 
 class ExactlyOnceOrderedReceiver(Process):
     def __init__(self, proc_id: str):
         self._id = proc_id
+        self._need_send_index = 0
 
     def on_local_message(self, msg: Message, ctx: Context):
         # not used in this task
@@ -222,7 +245,17 @@ class ExactlyOnceOrderedReceiver(Process):
     def on_message(self, msg: Message, sender: str, ctx: Context):
         # process messages from receiver
         # deliver message to local user with ctx.send_local()
-        pass
+        received_index = msg['id']
+        msg.remove('id')
+
+        if received_index <= self._need_send_index:
+            ctx.send(Message('', {'id': received_index}), sender)
+        else:
+            return
+
+        if received_index == self._need_send_index:
+            ctx.send_local(msg)
+            self._need_send_index += 1
 
     def on_timer(self, timer_name: str, ctx: Context):
         # process fired timers here
