@@ -147,13 +147,15 @@ class ExactlyOnceSender(Process):
 
     def on_timer(self, timer_name: str, ctx: Context):
         # process fired timers here
+        send_buffer_size = 2
+
         if timer_name in {'resend'}:
-            if len(self._need_send) != 0:
-                msg = self._need_send[0]
+            for i, msg in enumerate(self._need_send):
+                if i >= send_buffer_size:
+                    break
                 ctx.send(msg, self._receiver)
-
+            if len(self._need_send) > 0:
                 ctx.set_timer('resend', 5)
-
 
 class ExactlyOnceReceiver(Process):
     def __init__(self, proc_id: str):
