@@ -5,6 +5,7 @@
 
 # For python, uncomment all lines below:
 #
-# mkdir -p messenger/proto
-# ln -s $(pwd)/messenger.proto ./messenger/proto/messenger.proto || true
-# python3 -m grpc_tools.protoc -I../proto --python_out=../../ --pyi_out=../../ --grpc_python_out=../../ messenger/proto/messenger.proto
+python3 -m pip install --user grpcio-tools
+mkdir -p messenger/proto
+ln -s $(pwd)/messenger.proto ./messenger/proto/messenger.proto || true
+python3 -m grpc_tools.protoc -I../proto --python_out=../../ --pyi_out=../../ --grpc_python_out=../../ messenger/proto/messenger.proto
