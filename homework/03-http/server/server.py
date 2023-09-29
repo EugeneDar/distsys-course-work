@@ -83,6 +83,9 @@ class HTTPHandler(StreamRequestHandler):
                 return HTTPResponse(http_request.version, OK, headers, file_content).to_bytes()
 
     def handle_post(self, http_request, abs_path):
+        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
+        file_data = self.rfile.read(content_length)
+
         if os.path.exists(abs_path):
             output_bytes = "File or directory already exists".encode()
             headers = {
@@ -97,9 +100,6 @@ class HTTPHandler(StreamRequestHandler):
             os.makedirs(abs_path, exist_ok=True)
             return HTTPResponse(http_request.version, OK, {}).to_bytes()
 
-        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
-        file_data = self.rfile.read(content_length)
-
         if not os.path.exists(os.path.dirname(abs_path)):
             os.makedirs(os.path.dirname(abs_path))
 
@@ -109,6 +109,9 @@ class HTTPHandler(StreamRequestHandler):
         return HTTPResponse(http_request.version, OK, {}).to_bytes()
 
     def handle_put(self, http_request, abs_path):
+        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
+        file_data = self.rfile.read(content_length)
+
         if os.path.exists(abs_path) and os.path.isdir(abs_path):
             output_bytes = "This is directory".encode()
             headers = {
@@ -116,9 +119,6 @@ class HTTPHandler(StreamRequestHandler):
                 HEADER_CONTENT_LENGTH: str(len(output_bytes))
             }
             return HTTPResponse(http_request.version, CONFLICT, headers, output_bytes).to_bytes()
-
-        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
-        file_data = self.rfile.read(content_length)
 
         if not os.path.exists(os.path.dirname(abs_path)):
             os.makedirs(os.path.dirname(abs_path))
