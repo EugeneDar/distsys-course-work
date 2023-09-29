@@ -16,7 +16,6 @@ class HTTPRequest:
         pass
 
     def to_bytes(self) -> bytes:
-        # TODO: Write your code
         pass
 
 
