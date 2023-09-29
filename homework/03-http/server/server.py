@@ -37,8 +37,12 @@ class HTTPHandler(StreamRequestHandler):
         abs_path = str(pathlib.Path(str(self.server.working_directory) + http_request.path))
 
         if not os.path.exists(abs_path):
-            logger.info(f'File {abs_path} does not exist')
-            return  # TODO
+            output_bytes = f"{abs_path} not found".encode()
+            headers = {
+                'Content-Type': TEXT_PLAIN,
+                'Content-Length': str(len(output_bytes))
+            }
+            return HTTPResponse(http_request.version, NOT_FOUND, headers, output_bytes).to_bytes()
 
         if os.path.isdir(abs_path):
             output = subprocess.check_output(["ls", "-lA", "--time-style=long-iso", abs_path], universal_newlines=True)
@@ -58,8 +62,6 @@ class HTTPHandler(StreamRequestHandler):
                 'Content-Length': str(len(file_content))
             }
             return HTTPResponse(http_request.version, OK, headers, file_content).to_bytes()
-
-        logger.error('Can not handle get')
 
     # Use self.rfile and self.wfile to interact with the client
     # Access domain and working directory with self.server.{attr}
