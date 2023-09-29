@@ -1,5 +1,7 @@
+import gzip
 import logging
 import pathlib
+import shutil
 from dataclasses import dataclass
 from socketserver import StreamRequestHandler
 import typing as t
@@ -33,46 +35,134 @@ class HTTPHandler(StreamRequestHandler):
             headers_bytes += line
         return HTTPRequest.from_bytes(headers_bytes)
 
-    def _handle_get(self, http_request):
-        abs_path = str(pathlib.Path(str(self.server.working_directory) + http_request.path))
-
+    def handle_get(self, http_request, abs_path):
         if not os.path.exists(abs_path):
             output_bytes = f"{abs_path} not found".encode()
             headers = {
-                'Content-Type': TEXT_PLAIN,
-                'Content-Length': str(len(output_bytes))
+                HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                HEADER_CONTENT_LENGTH: str(len(output_bytes))
             }
             return HTTPResponse(http_request.version, NOT_FOUND, headers, output_bytes).to_bytes()
 
         if os.path.isdir(abs_path):
             output = subprocess.check_output(["ls", "-lA", "--time-style=long-iso", abs_path], universal_newlines=True)
-            logger.info(output)
             output_bytes = output.encode()
-            headers = {
-                'Content-Type': TEXT_PLAIN,
-                'Content-Length': str(len(output_bytes))
-            }
-            return HTTPResponse(http_request.version, OK, headers, output_bytes).to_bytes()
+
+            if GZIP in http_request.headers.get(HEADER_ACCEPT_ENCODING, ''):
+                output_bytes = gzip.compress(output_bytes)
+                headers = {
+                    HEADER_CONTENT_TYPE: APPLICATION_GZIP,
+                    HEADER_CONTENT_LENGTH: str(len(output_bytes)),
+                    HEADER_CONTENT_ENCODING: GZIP
+                }
+                return HTTPResponse(http_request.version, OK, headers, output_bytes).to_bytes()
+            else:
+                headers = {
+                    HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                    HEADER_CONTENT_LENGTH: str(len(output_bytes))
+                }
+                return HTTPResponse(http_request.version, OK, headers, output_bytes).to_bytes()
 
         if os.path.isfile(abs_path):
             with open(abs_path, 'rb') as file:
                 file_content = file.read()
-            headers = {
-                'Content-Type': TEXT_PLAIN,
-                'Content-Length': str(len(file_content))
-            }
-            return HTTPResponse(http_request.version, OK, headers, file_content).to_bytes()
 
-    # Use self.rfile and self.wfile to interact with the client
-    # Access domain and working directory with self.server.{attr}
+            if GZIP in http_request.headers.get(HEADER_ACCEPT_ENCODING, ''):
+                file_content = gzip.compress(file_content)
+                headers = {
+                    HEADER_CONTENT_TYPE: APPLICATION_GZIP,
+                    HEADER_CONTENT_LENGTH: str(len(file_content)),
+                    HEADER_CONTENT_ENCODING: GZIP
+                }
+                return HTTPResponse(http_request.version, OK, headers, file_content).to_bytes()
+            else:
+                headers = {
+                    HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                    HEADER_CONTENT_LENGTH: str(len(file_content))
+                }
+                return HTTPResponse(http_request.version, OK, headers, file_content).to_bytes()
+
+    def handle_post(self, http_request, abs_path):
+        if os.path.exists(abs_path):
+            output_bytes = "File or directory already exists".encode()
+            headers = {
+                HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                HEADER_CONTENT_LENGTH: str(len(output_bytes))
+            }
+            return HTTPResponse(http_request.version, CONFLICT, headers, output_bytes).to_bytes()
+
+        logger.info(http_request.headers.get(HEADER_CREATE_DIRECTORY, ''))
+
+        if http_request.headers.get(HEADER_CREATE_DIRECTORY, '').lower() == 'true':
+            os.makedirs(abs_path, exist_ok=True)
+            return HTTPResponse(http_request.version, OK, {}).to_bytes()
+
+        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
+        file_data = self.rfile.read(content_length)
+
+        if not os.path.exists(os.path.dirname(abs_path)):
+            os.makedirs(os.path.dirname(abs_path))
+
+        with open(abs_path, 'wb') as file:
+            file.write(file_data)
+
+        return HTTPResponse(http_request.version, OK, {}).to_bytes()
+
+    def handle_put(self, http_request, abs_path):
+        if os.path.exists(abs_path) and os.path.isdir(abs_path):
+            output_bytes = "This is directory".encode()
+            headers = {
+                HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                HEADER_CONTENT_LENGTH: str(len(output_bytes))
+            }
+            return HTTPResponse(http_request.version, CONFLICT, headers, output_bytes).to_bytes()
+
+        content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
+        file_data = self.rfile.read(content_length)
+
+        if not os.path.exists(os.path.dirname(abs_path)):
+            os.makedirs(os.path.dirname(abs_path))
+
+        with open(abs_path, 'wb') as file:
+            file.write(file_data)
+
+        return HTTPResponse(http_request.version, OK, {}).to_bytes()
+
+    def handle_delete(self, http_request, abs_path):
+        if (
+            os.path.exists(abs_path)
+            and os.path.isdir(abs_path)
+            and not http_request.headers.get(HEADER_REMOVE_DIRECTORY, None)
+        ):
+            output_bytes = f"We need {HEADER_REMOVE_DIRECTORY} header to remove directory".encode()
+            headers = {
+                HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                HEADER_CONTENT_LENGTH: str(len(output_bytes))
+            }
+            return HTTPResponse(http_request.version, NOT_ACCEPTABLE, headers, output_bytes).to_bytes()
+
+        if os.path.isfile(abs_path):
+            os.remove(abs_path)
+        elif os.path.isdir(abs_path):
+            shutil.rmtree(abs_path)
+
+        return HTTPResponse(http_request.version, OK, {}).to_bytes()
+
     def handle(self) -> None:
         logger.info(f"Handle connection from {self.client_address}")
 
         http_request = self._build_request()
+        abs_path = str(pathlib.Path(str(self.server.working_directory) + http_request.path))
 
         response_bytes = None
-        if http_request.method == 'GET':
-            response_bytes = self._handle_get(http_request)
+        if http_request.method == GET:
+            response_bytes = self.handle_get(http_request, abs_path)
+        elif http_request.method == POST:
+            response_bytes = self.handle_post(http_request, abs_path)
+        elif http_request.method == PUT:
+            response_bytes = self.handle_put(http_request, abs_path)
+        elif http_request.method == DELETE:
+            response_bytes = self.handle_delete(http_request, abs_path)
 
         self.wfile.write(response_bytes)
 
