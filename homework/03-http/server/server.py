@@ -61,6 +61,8 @@ class HTTPHandler(StreamRequestHandler):
             output = subprocess.check_output(["ls", "-lA", "--time-style=long-iso", abs_path], universal_newlines=True)
             output_bytes = output.encode()
 
+            # TODO may be too much memory here
+
             if GZIP in http_request.headers.get(HEADER_ACCEPT_ENCODING, ''):
                 output_bytes = gzip.compress(output_bytes)
                 headers = {
@@ -78,10 +80,16 @@ class HTTPHandler(StreamRequestHandler):
 
         if os.path.isfile(abs_path):
             if os.stat(abs_path).st_size > BATCH_SIZE:
-                headers = {
-                    HEADER_CONTENT_TYPE: TEXT_PLAIN,
-                    HEADER_CONTENT_LENGTH: str(os.stat(abs_path).st_size)
-                }
+                if GZIP in http_request.headers.get(HEADER_ACCEPT_ENCODING, ''):
+                    headers = {
+                        HEADER_CONTENT_TYPE: APPLICATION_OCTET_STREAM,
+                        HEADER_CONTENT_ENCODING: GZIP,
+                    }
+                else:
+                    headers = {
+                        HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                        HEADER_CONTENT_LENGTH: str(os.stat(abs_path).st_size)
+                    }
                 return HTTPResponse(http_request.version, OK, headers)
 
             with open(abs_path, 'rb') as file:
@@ -121,8 +129,6 @@ class HTTPHandler(StreamRequestHandler):
                 HEADER_CONTENT_LENGTH: str(len(output_bytes))
             }
             return HTTPResponse(http_request.version, CONFLICT, headers, output_bytes)
-
-        logger.info(http_request.headers.get(HEADER_CREATE_DIRECTORY, ''))
 
         if http_request.headers.get(HEADER_CREATE_DIRECTORY, '').lower() == 'true':
             for _ in self.read_rfile_by_parts(content_length):
@@ -216,18 +222,34 @@ class HTTPHandler(StreamRequestHandler):
         elif http_request.method == DELETE:
             http_response = self.handle_delete(http_request, abs_path)
 
-        if self.server.server_domain:
-            http_response.headers[HEADER_SERVER] = self.server.server_domain
+        http_response.headers[HEADER_SERVER] = self.server.server_domain or 'server'
 
         self.wfile.write(http_response.to_bytes())
 
-        if int(http_response.headers[HEADER_CONTENT_LENGTH]) > BATCH_SIZE:
+        if HEADER_CONTENT_LENGTH in http_response.headers and int(http_response.headers[HEADER_CONTENT_LENGTH]) > BATCH_SIZE:
             with open(abs_path, 'rb') as file:
                 while True:
                     file_content = file.read(BATCH_SIZE)
                     if not file_content:
                         break
                     self.wfile.write(file_content)
+
+        logger.info(http_response.status == OK)
+        logger.info(HEADER_CONTENT_LENGTH not in http_response.headers)
+
+        if http_response.status == OK and HEADER_CONTENT_LENGTH not in http_response.headers:
+            logger.info('1')
+            with open(abs_path, 'rb') as file:
+                gzipper = gzip.GzipFile(fileobj=self.wfile, mode='wb')
+                try:
+                    while True:
+                        data = file.read(BATCH_SIZE)
+                        if not data:
+                            break
+                        gzipper.write(data)
+                finally:
+                    gzipper.close()
+
 
 
 @click.command()
