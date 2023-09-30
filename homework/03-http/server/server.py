@@ -234,11 +234,7 @@ class HTTPHandler(StreamRequestHandler):
                         break
                     self.wfile.write(file_content)
 
-        logger.info(http_response.status == OK)
-        logger.info(HEADER_CONTENT_LENGTH not in http_response.headers)
-
         if http_response.status == OK and HEADER_CONTENT_LENGTH not in http_response.headers:
-            logger.info('1')
             with open(abs_path, 'rb') as file:
                 gzipper = gzip.GzipFile(fileobj=self.wfile, mode='wb')
                 try:
