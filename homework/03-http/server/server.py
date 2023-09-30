@@ -14,6 +14,7 @@ from http_messages import *
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+BATCH_SIZE = 32 * 1024 * 1024
 
 @dataclass
 class HTTPServer:
@@ -34,6 +35,15 @@ class HTTPHandler(StreamRequestHandler):
                 break
             headers_bytes += line
         return HTTPRequest.from_bytes(headers_bytes)
+
+    def read_rfile_by_parts(self, content_length):
+        while True:
+            if content_length == 0:
+                break
+            will_read = min(content_length, BATCH_SIZE)
+            content_length -= will_read
+            batch = self.rfile.read(will_read)
+            yield batch
 
     def handle_get(self, http_request, abs_path):
         if self.server.server_domain and self.server.server_domain != http_request.headers[HEADER_HOST]:
@@ -67,6 +77,13 @@ class HTTPHandler(StreamRequestHandler):
                 return HTTPResponse(http_request.version, OK, headers, output_bytes)
 
         if os.path.isfile(abs_path):
+            if os.stat(abs_path).st_size > BATCH_SIZE:
+                headers = {
+                    HEADER_CONTENT_TYPE: TEXT_PLAIN,
+                    HEADER_CONTENT_LENGTH: str(os.stat(abs_path).st_size)
+                }
+                return HTTPResponse(http_request.version, OK, headers)
+
             with open(abs_path, 'rb') as file:
                 file_content = file.read()
 
@@ -87,12 +104,17 @@ class HTTPHandler(StreamRequestHandler):
 
     def handle_post(self, http_request, abs_path):
         content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
-        file_data = self.rfile.read(content_length)
 
         if self.server.server_domain and self.server.server_domain != http_request.headers[HEADER_HOST]:
+            for _ in self.read_rfile_by_parts(content_length):
+                pass
+
             return HTTPResponse(http_request.version, BAD_REQUEST, {})
 
         if os.path.exists(abs_path):
+            for _ in self.read_rfile_by_parts(content_length):
+                pass
+
             output_bytes = "File or directory already exists".encode()
             headers = {
                 HEADER_CONTENT_TYPE: TEXT_PLAIN,
@@ -103,25 +125,38 @@ class HTTPHandler(StreamRequestHandler):
         logger.info(http_request.headers.get(HEADER_CREATE_DIRECTORY, ''))
 
         if http_request.headers.get(HEADER_CREATE_DIRECTORY, '').lower() == 'true':
+            for _ in self.read_rfile_by_parts(content_length):
+                pass
+
             os.makedirs(abs_path, exist_ok=True)
             return HTTPResponse(http_request.version, OK, {})
 
         if not os.path.exists(os.path.dirname(abs_path)):
             os.makedirs(os.path.dirname(abs_path))
 
-        with open(abs_path, 'wb') as file:
-            file.write(file_data)
+        # to empty file
+        open(abs_path, 'w').close()
+
+        # open it for appending
+        with open(abs_path, 'ab') as file:
+            for batch in self.read_rfile_by_parts(content_length):
+                file.write(batch)
 
         return HTTPResponse(http_request.version, OK, {})
 
     def handle_put(self, http_request, abs_path):
         content_length = int(http_request.headers.get(HEADER_CONTENT_LENGTH, 0))
-        file_data = self.rfile.read(content_length)
 
         if self.server.server_domain and self.server.server_domain != http_request.headers[HEADER_HOST]:
+            for _ in self.read_rfile_by_parts(content_length):
+                pass
+
             return HTTPResponse(http_request.version, BAD_REQUEST, {})
 
         if os.path.exists(abs_path) and os.path.isdir(abs_path):
+            for _ in self.read_rfile_by_parts(content_length):
+                pass
+
             output_bytes = "This is directory".encode()
             headers = {
                 HEADER_CONTENT_TYPE: TEXT_PLAIN,
@@ -132,8 +167,13 @@ class HTTPHandler(StreamRequestHandler):
         if not os.path.exists(os.path.dirname(abs_path)):
             os.makedirs(os.path.dirname(abs_path))
 
-        with open(abs_path, 'wb') as file:
-            file.write(file_data)
+        # to empty file
+        open(abs_path, 'w').close()
+
+        # open it for appending
+        with open(abs_path, 'ab') as file:
+            for batch in self.read_rfile_by_parts(content_length):
+                file.write(batch)
 
         return HTTPResponse(http_request.version, OK, {})
 
@@ -180,6 +220,14 @@ class HTTPHandler(StreamRequestHandler):
             http_response.headers[HEADER_SERVER] = self.server.server_domain
 
         self.wfile.write(http_response.to_bytes())
+
+        if int(http_response.headers[HEADER_CONTENT_LENGTH]) > BATCH_SIZE:
+            with open(abs_path, 'rb') as file:
+                while True:
+                    file_content = file.read(BATCH_SIZE)
+                    if not file_content:
+                        break
+                    self.wfile.write(file_content)
 
 
 @click.command()
