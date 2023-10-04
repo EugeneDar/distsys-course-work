@@ -1,5 +1,9 @@
 import dataclasses
 import typing as t
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -11,12 +15,37 @@ class HTTPRequest:
     headers: t.Dict[str, str]
 
     @staticmethod
+    def parse_headers(data: bytes) -> tuple:
+        logger.info(data)
+
+        header_lines = list(filter(bool, data.split(b'\r\n')))
+
+        method, path, version = header_lines[0].decode().split()
+
+        headers = {}
+        for line in header_lines[1:]:
+            key, value = line.decode().split(':', 1)
+            headers[key.strip()] = value.strip()
+        return method, path, version, headers
+
+    @staticmethod
+    def extract_parameters(path: str) -> dict:
+        parameters = {}
+        if '?' in path:
+            path, param_string = path.split('?', 1)
+            param_pairs = param_string.split('&')
+            for pair in param_pairs:
+                key, value = pair.split('=')
+                parameters[key] = value
+        return parameters
+
+    @staticmethod
     def from_bytes(data: bytes) -> "HTTPRequest":
-        # TODO: Write your code
-        pass
+        method, path, version, headers = HTTPRequest.parse_headers(data)
+        parameters = HTTPRequest.extract_parameters(path)
+        return HTTPRequest(method, path, version, parameters, headers)
 
     def to_bytes(self) -> bytes:
-        # TODO: Write your code
         pass
 
 
@@ -25,15 +54,22 @@ class HTTPResponse:
     version: str
     status: str
     headers: t.Dict[str, str]
+    body: bytes = b""
 
     @staticmethod
     def from_bytes(data: bytes) -> "HTTPResponse":
-        # TODO: Write your code
         pass
 
     def to_bytes(self) -> bytes:
-        # TODO: Write your code
-        pass
+        status_line = f"{self.version} {self.status} {HTTP_REASON_BY_STATUS[self.status]}\r\n"
+
+        headers_str = ""
+        for key, value in self.headers.items():
+            headers_str += f"{key}: {value}\r\n"
+
+        response_bytes = status_line.encode() + headers_str.encode() + CRLF + self.body
+
+        return response_bytes
 
 # Common HTTP strings and constants
 
