@@ -34,7 +34,7 @@ class BroadcastProcess(Process):
 
             self._messages_want_deliver[message_id] = [0, bcast_msg]
 
-    def try_send_messages(self, ctx):
+    def try_deliver_messages(self, ctx):
         messages_sent = 0
 
         for message_id in list(self._messages_want_deliver.keys()):
@@ -80,7 +80,7 @@ class BroadcastProcess(Process):
                 self._messages_broadcasted.add(message_id)
 
             while True:
-                sent = self.try_send_messages(ctx)
+                sent = self.try_deliver_messages(ctx)
                 if not sent:
                     break
 
