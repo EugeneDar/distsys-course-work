@@ -16,7 +16,6 @@ if __name__ == '__main__':
 
     result_channel = connection.channel()
     result_channel.queue_declare(queue='result_queue', durable=True)
-    # result_channel.confirm_delivery()
 
     task_channel = connection.channel()
     task_channel.queue_declare(queue='task_queue', durable=True)
@@ -49,7 +48,6 @@ if __name__ == '__main__':
             else:
                 break
 
-        # TODO do it before
         channel.basic_ack(delivery_tag=method.delivery_tag)  # Send ack
 
     task_channel.basic_qos(prefetch_count=1)
