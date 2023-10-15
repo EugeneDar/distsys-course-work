@@ -34,7 +34,7 @@ class Server:
                 print(f'Received: {body.decode()}')
                 message = json.loads(body.decode())
 
-                self.processed_images[message['id']] = message['result']
+                self.processed_images[str(message['id'])] = message['result']
 
                 channel.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -75,7 +75,7 @@ class Server:
         return list(self.processed_images.keys())
 
     def get_image_description(self, image_id: str) -> Optional[str]:
-        raise NotImplementedError
+        return self.processed_images.get(image_id, None)
 
 
 def create_app() -> Flask:
