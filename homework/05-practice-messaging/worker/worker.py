@@ -1,24 +1,52 @@
 from caption import get_image_caption
 import pika
 import time
+import json
 
 
 if __name__ == '__main__':
     connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', port=5672))
-    channel = connection.channel()
 
-    channel.queue_declare(queue='task_queue', durable=True)  # to make sure that the queue will survive a RabbitMQ node restart
-    print(' [*] Waiting for messages.')
+    result_channel = connection.channel()
+    result_channel.queue_declare(queue='result_queue', durable=True)
+    # result_channel.confirm_delivery()
 
-    def callback(ch, method, properties, body):
+    task_channel = connection.channel()
+    task_channel.queue_declare(queue='task_queue', durable=True)
+
+    def callback(channel, method, properties, body):
         print(" [x] Received %r" % body.decode())
-        print(ch, method, properties)
-        time.sleep(body.count(b'.'))
         print(" [x] Done")
-        ch.basic_ack(delivery_tag=method.delivery_tag)  # Send ack
 
+        input_message = json.loads(body.decode())
 
-    channel.basic_qos(prefetch_count=1)  # This uses the basic.qos protocol method to tell RabbitMQ not to give more than one message to a worker at a time
-    channel.basic_consume(queue='task_queue', on_message_callback=callback)
+        result = get_image_caption(input_message['image'])
 
-    channel.start_consuming()
+        output_message = str({
+            'id': input_message['id'],
+            'result': result,
+        }).replace('\'', '\"')
+
+        while True:
+            try:
+                result_channel.basic_publish(
+                    exchange='',
+                    routing_key='result_queue',
+                    body=output_message,
+                    properties=pika.BasicProperties(
+                        delivery_mode=2,
+                    )
+                )
+            except Exception as e:
+                time.sleep(1)
+            else:
+                break
+
+        # TODO do it before
+        channel.basic_ack(delivery_tag=method.delivery_tag)  # Send ack
+
+    task_channel.basic_qos(prefetch_count=1)
+    task_channel.basic_consume(queue='task_queue', on_message_callback=callback)
+
+    print(' [*] Waiting for messages.')
+    task_channel.start_consuming()
