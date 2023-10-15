@@ -56,8 +56,14 @@ class Server:
                     'image': image,
                 }).replace('\'', '\"')
 
-                while True:
+                self.sent = False
+                while not self.sent:
                     try:
+                        def return_callback_handler(channel, method, properties, body):
+                            self.sent = False
+
+                        self.task_channel.add_on_return_callback(return_callback_handler)
+                        self.sent = True
                         self.task_channel.basic_publish(
                             exchange='',
                             routing_key='task_queue',
