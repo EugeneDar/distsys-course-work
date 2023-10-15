@@ -16,7 +16,7 @@ class Server:
         self.host = host
         self.port = port
         self.counter = 0
-        self.processed_images = {}
+        self.processed_images = set()
 
         connection = pika.BlockingConnection(pika.ConnectionParameters(host=host, port=port))
 
@@ -34,7 +34,7 @@ class Server:
                 print(f'Received: {body.decode()}')
                 message = json.loads(body.decode())
 
-                self.processed_images[message['id']] = message['result']
+                self.processed_images.add(message['id'])
 
                 channel.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -72,10 +72,14 @@ class Server:
         return message_id
 
     def get_processed_images(self) -> List[int]:
-        return list(self.processed_images.keys())
+        return list(self.processed_images)
 
     def get_image_description(self, image_id: str) -> Optional[str]:
-        return self.processed_images.get(int(image_id), None)
+        if int(image_id) not in self.processed_images:
+            return None
+        with open('/data/' + image_id + '.txt', 'r') as file:
+            content = file.read()
+        return content
 
 
 def create_app() -> Flask:

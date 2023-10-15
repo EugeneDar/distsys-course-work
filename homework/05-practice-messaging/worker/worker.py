@@ -4,6 +4,13 @@ import time
 import json
 
 
+def save_data_in_file(filename, content):
+    f = open(filename, "w")
+    if f.write(content) != len(content):
+        print("Failure! String not written to text file.")
+    f.close()
+
+
 if __name__ == '__main__':
     connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', port=5672))
 
@@ -21,10 +28,10 @@ if __name__ == '__main__':
         input_message = json.loads(body.decode())
 
         result = get_image_caption(input_message['image'])
+        save_data_in_file('/data/' + str(input_message['id']) + '.txt', result)
 
         output_message = str({
             'id': input_message['id'],
-            'result': result,
         }).replace('\'', '\"')
 
         while True:
