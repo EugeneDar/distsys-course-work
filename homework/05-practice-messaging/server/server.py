@@ -1,5 +1,6 @@
 import logging
 from threading import Thread
+from queue import SimpleQueue
 
 import pika
 import time
@@ -17,6 +18,7 @@ class Server:
         self.port = port
         self.counter = 0
         self.processed_images = set()
+        self.queue = SimpleQueue()
 
         connection = pika.BlockingConnection(pika.ConnectionParameters(host=host, port=port))
 
@@ -41,33 +43,43 @@ class Server:
             result_channel.basic_consume(queue='result_queue', on_message_callback=callback)
             result_channel.start_consuming()
 
-        thread = Thread(target=listen_worker_messages)
-        thread.start()
+        worker_listener = Thread(target=listen_worker_messages)
+        worker_listener.start()
+
+        def listen_producer_messages():
+            while True:
+                item = self.queue.get()
+                message_id, image = item[0], item[1]
+
+                message = str({
+                    'id': message_id,
+                    'image': image,
+                }).replace('\'', '\"')
+
+                while True:
+                    try:
+                        self.task_channel.basic_publish(
+                            exchange='',
+                            routing_key='task_queue',
+                            body=message,
+                            properties=pika.BasicProperties(
+                                delivery_mode=2,
+                            )
+                        )
+                    except Exception as e:
+                        print("retransmit")
+                        time.sleep(1)
+                    else:
+                        break
+
+        producer_listener = Thread(target=listen_producer_messages)
+        producer_listener.start()
 
     def store_image(self, image: str) -> int:
         message_id = self.counter
         self.counter += 1
 
-        message = str({
-            'id': message_id,
-            'image': image,
-        }).replace('\'', '\"')
-
-        while True:
-            try:
-                self.task_channel.basic_publish(
-                    exchange='',
-                    routing_key='task_queue',
-                    body=message,
-                    properties=pika.BasicProperties(
-                        delivery_mode=2,
-                    )
-                )
-            except Exception as e:
-                print("retransmit")
-                time.sleep(1)
-            else:
-                break
+        self.queue.put((message_id, image))
 
         return message_id
 
@@ -77,7 +89,7 @@ class Server:
     def get_image_description(self, image_id: str) -> Optional[str]:
         if int(image_id) not in self.processed_images:
             return None
-        with open('/data/' + image_id + '.txt', 'r') as file:
+        with open(f'/data/{image_id}.txt', 'r') as file:
             content = file.read()
         return content
 
