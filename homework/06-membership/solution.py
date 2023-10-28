@@ -77,10 +77,13 @@ class GroupMember(Process):
 
     def _create_multicast_info(self):
         nodes_ids = random.sample(list(self._group.keys()), min(K, len(self._group)))
-        return {
+
+        info = {
             node_id: self._group[node_id]
             for node_id in nodes_ids
         }
+        info[self._id] = ALIVE
+        return info
 
     def _apply_multicast_info(self, info):
         for node_id, status in info.items():
