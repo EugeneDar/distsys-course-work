@@ -223,7 +223,6 @@ pub fn test_process_cannot_receive(config: &TestConfig) -> TestResult {
     // process goes partially offline (cannot receive incoming messages)
     let blocked_proc = group.remove(rand.gen_range(0..group.len()));
     sys.network().drop_incoming(&blocked_proc);
-    println!("step_until_stabilized");
     step_until_stabilized(&mut sys, group.into_iter().collect())
 }
 
