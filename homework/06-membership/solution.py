@@ -41,7 +41,6 @@ class GroupMember(Process):
         if seed == self._id:
             self._group.clear()
         else:
-            self._incarnation_counter += 1
             ctx.send(Message(JOIN, {
                 'newcomer': self._id,
                 'incarnation': self._incarnation_counter,
@@ -90,13 +89,17 @@ class GroupMember(Process):
             )
             for node_id in nodes_ids
         }
-        self._incarnation_counter += 1
         info[self._id] = (ALIVE, self._incarnation_counter)
         return info
 
     def _apply_multicast_info(self, info):
         for node_id, (status, incarnation) in info.items():
+
             if node_id == self._id:
+
+                if status == DEAD:
+                    self._incarnation_counter = 1 + max(incarnation, self._incarnation_counter)
+
                 continue
 
             # process if not in group
@@ -279,7 +282,7 @@ class GroupMember(Process):
 
             # sleep again if woke up too early
             if ctx.time() - self._phase_start_time < RESPONSE_TIME:
-                ctx.set_timer(SECOND_PHASE, SLEEP_TIME)
+                ctx.set_timer(THIRD_PHASE, SLEEP_TIME)
                 return
 
             if not self._got_suspected_ack:
