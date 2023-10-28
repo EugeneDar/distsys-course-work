@@ -27,6 +27,9 @@ class GroupMember(Process):
         self._group = {}  # id -> status
         self._in_group_now = False
 
+        self._members_timers = {}  # id -> incarnation iteration
+        self._incarnation_counter = 0
+
         self._phase_start_time = 0
         self._suspected_id = None
         self._got_suspected_ack = False
@@ -38,8 +41,10 @@ class GroupMember(Process):
         if seed == self._id:
             self._group.clear()
         else:
+            self._incarnation_counter += 1
             ctx.send(Message(JOIN, {
-                'newcomer': self._id
+                'newcomer': self._id,
+                'incarnation': self._incarnation_counter,
             }), seed)
             self._group = {
                 seed: ALIVE
@@ -79,29 +84,41 @@ class GroupMember(Process):
         nodes_ids = random.sample(list(self._group.keys()), min(K, len(self._group)))
 
         info = {
-            node_id: self._group[node_id]
+            node_id: (
+                self._group[node_id],
+                self._members_timers[node_id] if node_id in self._members_timers else 0
+            )
             for node_id in nodes_ids
         }
-        info[self._id] = ALIVE
+        self._incarnation_counter += 1
+        info[self._id] = (ALIVE, self._incarnation_counter)
         return info
 
     def _apply_multicast_info(self, info):
-        for node_id, status in info.items():
+        for node_id, (status, incarnation) in info.items():
             if node_id == self._id:
                 continue
 
+            # process if not in group
             if node_id not in self._group:
-                # print(f'{self._id} mark {node_id} as {status}. 1')
                 self._group[node_id] = status
+                self._members_timers[node_id] = incarnation
                 continue
 
-            # node_id in self._group
-            if status == DEAD or self._group[node_id] == DEAD:
-                # print(f'{self._id} mark {node_id} as DEAD. 2')
-                self._group[node_id] = DEAD
-            else:
-                # print(f'{self._id} mark {node_id} as ALIVE. 3')
-                self._group[node_id] = ALIVE
+            if node_id not in self._members_timers:
+                self._members_timers[node_id] = 0
+
+            if incarnation == self._members_timers[node_id]:
+
+                if status == DEAD or self._group[node_id] == DEAD:
+                    self._group[node_id] = DEAD
+                else:
+                    self._group[node_id] = ALIVE
+
+            elif incarnation > self._members_timers[node_id]:
+
+                self._group[node_id] = status
+                self._members_timers[node_id] = incarnation
 
     def _process_ping(self, msg: Message, sender: str, ctx: Context):
         """
@@ -173,12 +190,13 @@ class GroupMember(Process):
                     {
                         'suspect': msg['newcomer'],
                         'multicast info': {
-                            msg['newcomer']: ALIVE
+                            msg['newcomer']: (ALIVE, msg['incarnation'])
                         },
                     }
                 ), node_id)
 
             self._group[sender] = ALIVE
+            self._members_timers[sender] = msg['incarnation']
 
         if msg.type == PING:
 
