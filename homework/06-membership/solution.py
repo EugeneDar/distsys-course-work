@@ -15,9 +15,7 @@ RESPONSE_TIME = 0.21
 SLEEP_TIME = RESPONSE_TIME
 K = 3
 
-
 ALIVE = 1
-LEFT = 4
 DEAD = 5
 
 
@@ -108,8 +106,7 @@ class GroupMember(Process):
                 self._members_timers[node_id] = incarnation
                 continue
 
-            if node_id not in self._members_timers:
-                self._members_timers[node_id] = 0
+            self._members_timers.setdefault(node_id, 0)
 
             if incarnation == self._members_timers[node_id]:
 
@@ -273,8 +270,6 @@ class GroupMember(Process):
                 self._send_random_ping_requests(ctx)
             ctx.set_timer(THIRD_PHASE, SLEEP_TIME)
 
-            return
-
         elif timer_name == THIRD_PHASE:
             """
             Mark as failed if there is no ack
@@ -286,7 +281,6 @@ class GroupMember(Process):
                 return
 
             if not self._got_suspected_ack:
-                # print(f'{self._id} mark {self._suspected_id} as DEAD. 0')
                 self._group[self._suspected_id] = DEAD
             else:
                 self._group[self._suspected_id] = ALIVE
