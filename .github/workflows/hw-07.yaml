@@ -17,8 +17,6 @@ jobs:
     if: github.repository != 'osukhoroslov/distsys-course-hse'
     runs-on: ubuntu-latest
     steps:
-#      - name: Install libs
-#        run: pip install sortedcontainers
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
