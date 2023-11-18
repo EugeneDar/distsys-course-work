@@ -45,6 +45,37 @@ class StorageNode(Process):
         else:
             return second_op_time, second_value
 
+    def _refresh_stale_nodes(self, msg: Message, sender: str, ctx: Context):
+        quorum_result = self._take_quorum_result(msg)
+
+        quorum_id = msg[QUORUM_ID]
+        operation_time = max(answer[OPERATION_TIME] for answer in self._quorum[quorum_id][ANSWERS])
+
+        if quorum_result[VALUE] != msg[VALUE]:
+            ctx.send(
+                Message('REFRESH', {
+                    KEY: quorum_result[KEY],
+                    VALUE: quorum_result[VALUE],
+                    OPERATION_TIME: operation_time,
+                }),
+                sender
+            )
+
+    def _refresh_node(self, msg):
+        key = msg[KEY]
+
+        won_operation_time, won_value = self._solve_conflicts(
+            self._operations_times.get(key, -1),
+            self._data.get(key),
+            msg[OPERATION_TIME],
+            msg[VALUE]
+        )
+
+        self._data[key] = won_value
+        self._operations_times[key] = won_operation_time
+
+        return won_value, won_operation_time
+
     def _create_quorum(self, quorum_size, replicas) -> str:
         self._quorum_counter += 1
 
@@ -89,8 +120,10 @@ class StorageNode(Process):
             ):
                 newest_answer = answer
 
-        newest_answer.pop(OPERATION_TIME)
-        return newest_answer
+        return {
+            KEY: newest_answer[KEY],
+            VALUE: newest_answer[VALUE],
+        }
 
     def _handle_local_get(self, msg: Message, ctx: Context):
         key = msg[KEY]
@@ -191,6 +224,8 @@ class StorageNode(Process):
         key = msg[KEY]
         quorum_id = msg[QUORUM_ID]
 
+        # won_value, won_operation_time = self._refresh_node(msg)
+
         won_operation_time, won_value = self._solve_conflicts(
             self._operations_times.get(key, -1),
             self._data.get(key),
@@ -231,6 +266,9 @@ class StorageNode(Process):
 
     def _handle_answer(self, msg: Message, sender: str, ctx: Context):
         self._add_answer_to_quorum(msg)
+
+        self._refresh_stale_nodes(msg, sender, ctx)
+
         if not self._have_enough_quorum(msg):
             return
 
@@ -252,6 +290,9 @@ class StorageNode(Process):
 
         elif msg.type in ['GET_ANSWER', 'PUT_ANSWER', 'DELETE_ANSWER']:
             self._handle_answer(msg, sender, ctx)
+
+        elif msg.type == 'REFRESH':
+            self._refresh_node(msg)
 
     def on_timer(self, timer_name: str, ctx: Context):
         pass
