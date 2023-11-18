@@ -31,6 +31,20 @@ class StorageNode(Process):
         """
         self._quorum = {}
 
+    def _solve_conflicts(self, first_op_time, first_value, second_op_time, second_value) -> tuple[int, str]:
+        if first_op_time > second_op_time:
+            return first_op_time, first_value
+        elif second_op_time > first_op_time:
+            return second_op_time, second_value
+
+        if not first_value and not second_value:
+            return first_op_time, first_value
+
+        if (first_value or "") > (second_value or ""):
+            return first_op_time, first_value
+        else:
+            return second_op_time, second_value
+
     def _create_quorum(self, quorum_size, replicas) -> str:
         self._quorum_counter += 1
 
@@ -175,19 +189,24 @@ class StorageNode(Process):
 
     def _handle_put_req(self, msg: Message, sender: str, ctx: Context):
         key = msg[KEY]
-        value = msg[VALUE]
         quorum_id = msg[QUORUM_ID]
 
-        self._data[key] = value
-        # TODO if operation time of put less then current key operation time, then do nothing
-        self._operations_times[key] = msg[OPERATION_TIME]
+        won_operation_time, won_value = self._solve_conflicts(
+            self._operations_times.get(key, -1),
+            self._data.get(key),
+            msg[OPERATION_TIME],
+            msg[VALUE]
+        )
+
+        self._data[key] = won_value
+        self._operations_times[key] = won_operation_time
 
         ctx.send(
             Message('PUT_ANSWER', {
                 KEY: key,
-                VALUE: value,
+                VALUE: won_value,
                 QUORUM_ID: quorum_id,
-                OPERATION_TIME: msg[OPERATION_TIME],
+                OPERATION_TIME: won_operation_time,
             }),
             sender
         )
