@@ -14,6 +14,7 @@ REQUEST_INFO = 'request_info'
 SENDER = 'sender'
 REQUEST_TYPE = 'request_type'
 REAL_REPLICA = 'real_replica'
+HH_ID = 'hh_id'
 
 
 class StorageNode(Process):
@@ -21,6 +22,7 @@ class StorageNode(Process):
         self._id = node_id
         self._nodes = nodes
         self._quorum_counter = 0
+        self._hh_counter = 0
 
         """
         KEY -> VALUE
@@ -33,9 +35,14 @@ class StorageNode(Process):
         self._operations_times = {}
 
         """
-        QUORUM_ID -> {QUORUM: number, ANSWERS: []}
+        QUORUM_ID -> {QUORUM: number, ANSWERS: [], REQUEST_INFO: {}}
         """
         self._quorum = {}
+
+        """
+        HH_ID -> {REQUEST_INFO: {}, REAL_REPLICA: id}
+        """
+        self._hinted_handoff_queue = {}
 
     def _solve_conflicts(self, first_op_time, first_value, second_op_time, second_value) -> tuple[int, str]:
         if first_op_time > second_op_time:
@@ -66,6 +73,25 @@ class StorageNode(Process):
                 }),
                 sender
             )
+
+    def _launch_hinted_handoff(self, msg: Message, sender: str, ctx: Context):
+        if self._id in get_key_replicas(msg[KEY], len(self._nodes)):
+            return
+
+        hh_id = str(self._hh_counter)
+        self._hh_counter += 1
+
+        self._hinted_handoff_queue[hh_id] = {
+            REQUEST_INFO: {
+                REQUEST_TYPE: msg.type.replace('REQ', 'REFRESH'),
+                KEY: msg[KEY],
+                VALUE: msg[VALUE],
+                OPERATION_TIME: ctx.time(),
+            },
+            REAL_REPLICA: msg[REAL_REPLICA],
+        }
+
+        ctx.set_timer_once('hh', TIMER_TIME)
 
     def _refresh_node(self, msg):
         key = msg[KEY]
@@ -240,6 +266,8 @@ class StorageNode(Process):
         )
 
     def _handle_put_req(self, msg: Message, sender: str, ctx: Context):
+        self._launch_hinted_handoff(msg, sender, ctx)
+
         key = msg[KEY]
         quorum_id = msg[QUORUM_ID]
 
@@ -274,6 +302,10 @@ class StorageNode(Process):
         )
 
     def _handle_answer(self, msg: Message, sender: str, ctx: Context):
+        if msg[QUORUM_ID] not in self._quorum:
+            print('Message not from my quorum')
+            return
+
         self._add_answer_to_quorum(msg, sender)
 
         self._refresh_stale_nodes(msg, sender, ctx)
@@ -285,6 +317,16 @@ class StorageNode(Process):
 
         ctx.send_local(
             Message(msg.type.replace('ANSWER', 'RESP'), quorum_result)
+        )
+
+    def _handle_put_refresh(self, msg: Message, sender: str, ctx: Context):
+        self._refresh_node(msg)
+
+        ctx.send(
+            Message('REFRESH_ACK', {
+                HH_ID: msg[HH_ID]
+            }),
+            sender
         )
 
     def on_message(self, msg: Message, sender: str, ctx: Context):
@@ -302,6 +344,12 @@ class StorageNode(Process):
 
         elif msg.type == 'REFRESH':
             self._refresh_node(msg)
+
+        elif msg.type == 'PUT_REFRESH':
+            self._handle_put_refresh(msg, sender, ctx)
+
+        elif msg.type == 'REFRESH_ACK':
+            self._hinted_handoff_queue.pop(msg[HH_ID])
 
     def __find_new_replicas_info(self, quorum_id):
         who_answered = [answer[SENDER] for answer in self._quorum[quorum_id][ANSWERS]]
@@ -355,9 +403,29 @@ class StorageNode(Process):
             )
 
     def _hinted_handoff_timer(self, timer_name: str, ctx: Context):
-        # TODO implement
-        # TODO use
-        pass
+        for hh_id in list(self._hinted_handoff_queue.keys()):
+            info = self._hinted_handoff_queue[hh_id]
+
+            request_info = info[REQUEST_INFO]
+            real_replica = info[REAL_REPLICA]
+
+            # todo think about it
+            if request_info[REQUEST_TYPE] != 'PUT_REFRESH':
+                self._hinted_handoff_queue.pop(hh_id)
+                continue
+
+            ctx.send(
+                Message(request_info[REQUEST_TYPE], {
+                    KEY: request_info[KEY],
+                    VALUE: request_info[VALUE],
+                    OPERATION_TIME: request_info[OPERATION_TIME],
+                    HH_ID: hh_id,
+                }),
+                real_replica
+            )
+
+        if len(self._hinted_handoff_queue) > 0:
+            ctx.set_timer_once('hh', TIMER_TIME)
 
     def on_timer(self, timer_name: str, ctx: Context):
         """
