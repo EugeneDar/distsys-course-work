@@ -2,12 +2,18 @@ import hashlib
 from dslabmp import Context, Message, Process
 from typing import List
 
+TIMER_TIME = 0.5
+
 KEY = 'key'
 VALUE = 'value'
 QUORUM = 'quorum'
 QUORUM_ID = 'quorum_id'
 ANSWERS = 'answers'
 OPERATION_TIME = 'operation_time'
+REQUEST_INFO = 'request_info'
+SENDER = 'sender'
+REQUEST_TYPE = 'request_type'
+REAL_REPLICA = 'real_replica'
 
 
 class StorageNode(Process):
@@ -76,19 +82,25 @@ class StorageNode(Process):
 
         return won_value, won_operation_time
 
-    def _create_quorum(self, quorum_size, replicas) -> str:
+    def _create_quorum(self, quorum_size, msg, ctx) -> str:
         self._quorum_counter += 1
 
         quorum_id = str(self._quorum_counter)
 
         self._quorum[quorum_id] = {
             QUORUM: quorum_size,
-            ANSWERS: []
+            ANSWERS: [],
+            REQUEST_INFO: {
+                REQUEST_TYPE: msg.type,
+                KEY: msg[KEY],
+                VALUE: msg[VALUE] if msg.type == 'PUT' else None,
+                OPERATION_TIME: ctx.time(),
+            }
         }
 
         return quorum_id
 
-    def _add_answer_to_quorum(self, msg):
+    def _add_answer_to_quorum(self, msg, sender):
         key = msg[KEY]
         value = msg[VALUE]
         quorum_id = msg[QUORUM_ID]
@@ -98,6 +110,7 @@ class StorageNode(Process):
             KEY: key,
             VALUE: value,
             OPERATION_TIME: operation_time,
+            SENDER: sender,
         })
 
     def _have_enough_quorum(self, msg) -> bool:
@@ -130,7 +143,7 @@ class StorageNode(Process):
         quorum = msg[QUORUM]
         replicas = get_key_replicas(key, len(self._nodes))
 
-        quorum_id = self._create_quorum(quorum, replicas)
+        quorum_id = self._create_quorum(quorum, msg, ctx)
 
         for replica in replicas:
             ctx.send(
@@ -141,13 +154,15 @@ class StorageNode(Process):
                 replica
             )
 
+        ctx.set_timer('sq' + quorum_id, TIMER_TIME)
+
     def _handle_local_put(self, msg: Message, ctx: Context):
         key = msg[KEY]
         value = msg[VALUE]
         quorum = msg[QUORUM]
         replicas = get_key_replicas(key, len(self._nodes))
 
-        quorum_id = self._create_quorum(quorum, replicas)
+        quorum_id = self._create_quorum(quorum, msg, ctx)
 
         for replica in replicas:
             ctx.send(
@@ -160,12 +175,14 @@ class StorageNode(Process):
                 replica
             )
 
+        ctx.set_timer('sq' + quorum_id, TIMER_TIME)
+
     def _handle_local_delete(self, msg: Message, ctx: Context):
         key = msg[KEY]
         quorum = msg[QUORUM]
         replicas = get_key_replicas(key, len(self._nodes))
 
-        quorum_id = self._create_quorum(quorum, replicas)
+        quorum_id = self._create_quorum(quorum, msg, ctx)
 
         for replica in replicas:
             ctx.send(
@@ -176,6 +193,8 @@ class StorageNode(Process):
                 }),
                 replica
             )
+
+        ctx.set_timer('sq' + quorum_id, TIMER_TIME)
 
     def on_local_message(self, msg: Message, ctx: Context):
         # Get key value.
@@ -224,17 +243,7 @@ class StorageNode(Process):
         key = msg[KEY]
         quorum_id = msg[QUORUM_ID]
 
-        # won_value, won_operation_time = self._refresh_node(msg)
-
-        won_operation_time, won_value = self._solve_conflicts(
-            self._operations_times.get(key, -1),
-            self._data.get(key),
-            msg[OPERATION_TIME],
-            msg[VALUE]
-        )
-
-        self._data[key] = won_value
-        self._operations_times[key] = won_operation_time
+        won_value, won_operation_time = self._refresh_node(msg)
 
         ctx.send(
             Message('PUT_ANSWER', {
@@ -265,7 +274,7 @@ class StorageNode(Process):
         )
 
     def _handle_answer(self, msg: Message, sender: str, ctx: Context):
-        self._add_answer_to_quorum(msg)
+        self._add_answer_to_quorum(msg, sender)
 
         self._refresh_stale_nodes(msg, sender, ctx)
 
@@ -294,8 +303,78 @@ class StorageNode(Process):
         elif msg.type == 'REFRESH':
             self._refresh_node(msg)
 
-    def on_timer(self, timer_name: str, ctx: Context):
+    def __find_new_replicas_info(self, quorum_id):
+        who_answered = [answer[SENDER] for answer in self._quorum[quorum_id][ANSWERS]]
+
+        key = self._quorum[quorum_id][REQUEST_INFO][KEY]
+
+        real_replicas = get_key_replicas(key, len(self._nodes))
+
+        new_replicas = []
+        some_pointer = int(real_replicas[-1])
+        while len(new_replicas) != 3 - len(who_answered):
+            some_pointer = get_next_replica(some_pointer, len(self._nodes))
+            new_replicas.append(str(some_pointer))
+
+        ancestors = []
+        real_replicas_pointer = 0
+        while len(ancestors) != len(new_replicas):
+            while real_replicas[real_replicas_pointer] in who_answered:
+                real_replicas_pointer += 1
+            ancestors.append(real_replicas[real_replicas_pointer])
+            real_replicas_pointer += 1
+
+        return new_replicas, ancestors
+
+    def _sloppy_quorum_timer(self, timer_name: str, ctx: Context):
+        quorum_id = timer_name[2:]
+        quorum_have = len(self._quorum[quorum_id][ANSWERS])
+
+        if quorum_have >= 3:
+            return
+
+        request_info = self._quorum[quorum_id][REQUEST_INFO]
+
+        request_type = request_info[REQUEST_TYPE] + '_REQ'
+        key = request_info[KEY]
+        value = request_info[VALUE]
+        operation_time = request_info[OPERATION_TIME]
+
+        new_replicas, ancestors = self.__find_new_replicas_info(quorum_id)
+
+        for new_replica, ancestor in zip(new_replicas, ancestors):
+            ctx.send(
+                Message(request_type, {
+                    KEY: key,
+                    VALUE: value,
+                    QUORUM_ID: quorum_id,
+                    OPERATION_TIME: operation_time,
+                    REAL_REPLICA: ancestor,
+                }),
+                new_replica
+            )
+
+    def _hinted_handoff_timer(self, timer_name: str, ctx: Context):
+        # TODO implement
+        # TODO use
         pass
+
+    def on_timer(self, timer_name: str, ctx: Context):
+        """
+        Данный таймер завязан на тот факт,
+        что ключ всегда должен оказаться в трех репликах.
+
+        И если этого не случилось, то запрос нужно отправить
+        и остальным узлам.
+
+        Вероятно достаточно просто отправить им аналогичный запрос
+        и не делать больше ничего лишнего.
+        """
+        if timer_name.startswith('sq'):
+            self._sloppy_quorum_timer(timer_name, ctx)
+
+        elif timer_name.startswith('hh'):
+            self._hinted_handoff_timer(timer_name, ctx)
 
 
 def get_key_replicas(key: str, node_count: int):
