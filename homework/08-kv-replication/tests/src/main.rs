@@ -69,7 +69,6 @@ fn main() {
     tests.add("STALE REPLICA", test_stale_replica, config);
     tests.add("STALE REPLICA DELETE", test_stale_replica_delete, config);
     tests.add("DIVERGED REPLICAS", test_diverged_replicas, config);
-
     tests.add("SLOPPY QUORUM READ", test_sloppy_quorum_read, config);
     tests.add("SLOPPY QUORUM WRITE", test_sloppy_quorum_write, config);
     tests.add("SLOPPY QUORUM TRICKY", test_sloppy_quorum_tricky, config);
