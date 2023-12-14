@@ -2,6 +2,7 @@ from flask import Flask, request, Response
 
 import jwt
 import os
+import argparse
 import hashlib
 import json
 
@@ -10,9 +11,9 @@ app = Flask(__name__)
 users = {}
 
 
-def password_hasher(password):
+def password_hasher(username, password):
     m = hashlib.md5()
-    m.update(password.encode())
+    m.update((username + password).encode())
     return m.hexdigest()
 
 
@@ -30,10 +31,10 @@ def signup():
     if username in users.keys():
         return Response(status=403)
 
-    users[username] = password_hasher(password)
+    users[username] = password_hasher(username, password)
 
     private_key = read_file_data(
-        os.environ.get('JWT_PRIVATE_KEY_FILE', 'signature.pem')
+        os.environ.get('JWT_PRIVATE_KEY_FILE', private_path)
     )
 
     cookie = jwt.encode({'username': username}, private_key, 'RS256')
@@ -54,11 +55,11 @@ def login():
     if username not in users.keys():
         return Response(status=403)
 
-    if users[username] != password_hasher(password):
+    if users[username] != password_hasher(username, password):
         return Response(status=403)
 
     private_key = read_file_data(
-        os.environ.get('JWT_PRIVATE_KEY_FILE', 'signature.pem')
+        os.environ.get('JWT_PRIVATE_KEY_FILE', private_path)
     )
 
     cookie = jwt.encode({'username': username}, private_key, 'RS256')
@@ -76,7 +77,7 @@ def whoami():
         return Response(status=401)
 
     public_key = read_file_data(
-        os.environ.get('JWT_PUBLIC_KEY_FILE', 'signature.pub')
+        os.environ.get('JWT_PUBLIC_KEY_FILE', public_path)
     )
 
     try:
@@ -93,4 +94,12 @@ def whoami():
 
 
 if __name__ == '__main__':
-    app.run(host="auth", port=8090)
+    parser = argparse.ArgumentParser(description='auth')
+    parser.add_argument('--private', type=str, default='/tmp/signature.pem')
+    parser.add_argument('--public', type=str, default='/tmp/signature.pub')
+    parser.add_argument('--port', type=int, default=8090)
+
+    args = parser.parse_args()
+    private_path, public_path, port = args.private, args.public, args.port
+
+    app.run(host="auth", port=port)

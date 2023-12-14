@@ -2,6 +2,7 @@ from flask import Flask, request, Response
 
 import jwt
 import os
+import argparse
 import hashlib
 import json
 
@@ -9,12 +10,6 @@ app = Flask(__name__)
 
 values = {}
 users = {}
-
-
-def password_hasher(password):
-    m = hashlib.md5()
-    m.update(password.encode())
-    return m.hexdigest()
 
 
 def read_file_data(filename):
@@ -31,7 +26,7 @@ def put():
         return Response(status=401)
 
     public_key = read_file_data(
-        os.environ.get('JWT_PUBLIC_KEY_FILE', '/tmp/signature.pub')
+        os.environ.get('JWT_PUBLIC_KEY_FILE', public_path)
     )
 
     try:
@@ -59,7 +54,7 @@ def get():
         return Response(status=401)
 
     public_key = read_file_data(
-        os.environ.get('JWT_PUBLIC_KEY_FILE', '/tmp/signature.pub')
+        os.environ.get('JWT_PUBLIC_KEY_FILE', public_path)
     )
 
     try:
@@ -81,4 +76,12 @@ def get():
 
 
 if __name__ == '__main__':
-    app.run(host="kv", port=8090)
+    parser = argparse.ArgumentParser(description='auth')
+    parser.add_argument('--private', type=str, default='/tmp/signature.pem')
+    parser.add_argument('--public', type=str, default='/tmp/signature.pub')
+    parser.add_argument('--port', type=int, default=8090)
+
+    args = parser.parse_args()
+    private_path, public_path, port = args.private, args.public, args.port
+
+    app.run(host="kv", port=port)
