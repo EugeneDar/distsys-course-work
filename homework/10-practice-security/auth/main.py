@@ -2,6 +2,7 @@ from flask import Flask, request, Response
 
 import jwt
 import os
+import hashlib
 import json
 
 app = Flask(__name__)
@@ -10,8 +11,9 @@ users = {}
 
 
 def password_hasher(password):
-    # TODO
-    return password
+    m = hashlib.md5()
+    m.update(password.encode())
+    return m.hexdigest()
 
 
 def read_file_data(filename):
