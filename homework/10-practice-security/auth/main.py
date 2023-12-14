@@ -66,6 +66,29 @@ def login():
 
     return response
 
+@app.get('/whoami')
+def whoami():
+    cookie = request.cookies.get('jwt', None)
+
+    if cookie is None:
+        return Response(status=401)
+
+    public_key = read_file_data(
+        os.environ.get('JWT_PUBLIC_KEY_FILE', 'signature.pub')
+    )
+
+    try:
+        decoded = jwt.decode(cookie, public_key, 'RS256')
+        username = decoded['username']
+    except Exception as e:
+        return Response(status=400)
+
+    if username not in users:
+        return Response(status=400)
+
+    response = Response(f"Hello, {username}", status=200)
+    return response
+
 
 if __name__ == '__main__':
     app.run(host="auth", port=8090)
