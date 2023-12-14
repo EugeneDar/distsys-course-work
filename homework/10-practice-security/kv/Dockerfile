@@ -1,13 +1,14 @@
-FROM golang:1.20-alpine
+FROM python:3.9-alpine
 
-WORKDIR /pracrice-security/kv
-COPY go.* .
+RUN apk add --no-cache gcc libressl-dev musl-dev libffi-dev && \
+    pip install --no-cache-dir cryptography==38.0.4 && \
+    apk del libressl-dev musl-dev libffi-dev
 
-RUN go mod download -x
+WORKDIR /practice-security/kv
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
 COPY * .
 
-RUN go build .
-
-ENTRYPOINT ["./kv"]
-
+ENTRYPOINT ["python3", "main.py"]
